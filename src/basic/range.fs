@@ -65,10 +65,6 @@ let proj_ord f a1 a2 = compare (f a1)  (f a2)
 type file_idx = int32 
 type pos = int32 
 type range = int64 
-(*    { rangeFile: string;
-      rangeBegin: pos;
-      rangeEnd: pos }  *) 
-    (* { posLine: int; posCol: int }  *)
 
 let col_nbits  = 9
 let line_nbits  = 16
@@ -134,6 +130,8 @@ type FileIndexTable() =
                         indexToFileTable.Add(f);
                         fileToIndexTable.[f] <- n;
                         n)
+        member t.SetFileName n f =
+            indexToFileTable.[n] <- f
 
         member t.IndexToFile n = 
             (if n < 0 then failwithf "file_of_file_idx: negative argument: n = %d\n" n);
@@ -148,10 +146,10 @@ let fileIndexTable = new FileIndexTable()
 // Note if we exceed the maximum number of files we'll start to report incorrect file names
 let file_idx_of_file f = fileIndexTable.FileToIndex(f) % maxFileIndex 
 let file_of_file_idx n = fileIndexTable.IndexToFile(n)
+let set_file_of_range r f = fileIndexTable.SetFileName (file_idx_of_range r) f
 
 let mk_range f b e = mk_file_idx_range (file_idx_of_file f) b e
 let file_of_range r = file_of_file_idx (file_idx_of_range r)
-
 
 (* end representation, start derived ops *)
 
@@ -160,6 +158,7 @@ let end_of_range r = mk_pos (end_line_of_range r) (end_col_of_range r)
 let dest_file_idx_range r = file_idx_of_range r,start_of_range r,end_of_range r
 let dest_range r = file_of_range r,start_of_range r,end_of_range r
 let dest_pos p = line_of_pos p,col_of_pos p
+let end_range (r:range) = mk_range (file_of_range r) (end_of_range r) (end_of_range r)
 
 let trim_range_right r n = 
     let fidx,p1,p2 = dest_file_idx_range r in 
@@ -230,3 +229,14 @@ let decode_file_idx (s:string) =
 (* For Diagnostics *)
 let string_of_pos   pos = let line,col = line_of_pos pos,col_of_pos pos in sprintf "%d,%d" line col
 let string_of_range r   = sprintf "%s(%s-%s)" (file_of_range r) (string_of_pos (start_of_range r)) (string_of_pos (end_of_range r))
+
+let compare r1 r2 = 
+    let fcomp = String.compare (file_of_range r1) (file_of_range r2) in
+    if fcomp = 0
+    then let start1 = start_of_range r1 in          
+         let start2 = start_of_range r2 in
+         let lcomp = line_of_pos start1 - line_of_pos start2 in
+         if lcomp = 0 
+         then col_of_pos start1 - col_of_pos start2
+         else lcomp
+    else fcomp

@@ -69,6 +69,7 @@ let nothing =
 
 let rec js_of_const (c:sconst) : expression_t =
     match c with
+    | Const_int _ -> failwith "Unexpected mathematical integer constant"
     | Const_unit -> JSE_Undefined
     | Const_uint8(n) -> JSE_Number(Util.float_of_byte n)
     | Const_bool(b) -> JSE_Bool(b)
@@ -130,20 +131,18 @@ and js_of_match (e:exp) (cases:list<(pat * option<exp> * exp)>) =
         let pat_return props = let rs = JSS_Return(Some(js_of_expr None ret)) in
             let r = match cond with None -> rs | Some(c) -> JSS_If(js_of_expr None c, rs, None)
             in if props=[] then r else JSS_With(JSE_Object(props),r) in
-        let rec aux (id:string) (p:pat) = match p with
-        | Pat_cons(x, l) -> let tagcond = JSE_Equal(JSE_Identifier(id^".t"), JSE_String(x.str)) in
+        let rec aux (id:string) (p:pat) = match p.v with
+        | Pat_cons(x, l) -> let tagcond = JSE_Equal(JSE_Identifier(id^".t"), JSE_String(x.v.str)) in
             let (valcond, valbinds, _) = List.fold_left (
                 fun (cur, b, i) p -> let (next, nb) = aux (id^".v["^(Util.string_of_int i)^"]") p in
                 (and_cond cur next, b @ nb, i+1)
             ) (JSE_Bool(true), [], 0) l in (and_cond tagcond valcond, valbinds)
-        | Pat_var(bv) -> (JSE_Bool(true), [JSP_Property(bv.ppname.idText, JSE_Identifier(id))])
+        | Pat_var(bv, _) -> (JSE_Bool(true), [JSP_Property(bv.v.ppname.idText, JSE_Identifier(id))])
         | Pat_tvar(_) -> failwith "fail..."
         | Pat_constant(c) -> (JSE_Sequal(JSE_Identifier(id), js_of_const c), [])
         | Pat_disj(l) -> List.fold_left (fun (cur,b) p->
             let (next, nb) = aux id p in (or_cond cur next, b @ nb)) (JSE_Bool(false), []) l
-        | Pat_wild -> (JSE_Bool(true), [])
-        | Pat_meta(Meta_pat_exp(p, _))
-        | Pat_meta(Meta_pat_pos(p,_)) -> aux id p
+        | Pat_wild _ -> (JSE_Bool(true), [])
         | _ -> failwith "fail..."
         in let (conds, binds) = (aux "$v" p) in
         let finalret = pat_return binds in
@@ -153,7 +152,7 @@ and js_of_match (e:exp) (cases:list<(pat * option<exp> * exp)>) =
         if Util.for_some (function JS_Statement(JSS_Return(_))->true|_->false) r
         then r else r @ [JS_Statement(JSS_Throw(JSE_String("Incomplete pattern")))]
     in match cases with
-        | [(Pat_constant(Const_bool(true)), None, e1); (Pat_constant(Const_bool(false)), None, e2)] ->
+        | [({v=Pat_constant(Const_bool(true))}, None, e1); ({v=Pat_constant(Const_bool(false))}, None, e2)] ->
              JSE_Conditional(js_of_expr None e, js_of_expr None e1, js_of_expr None e2)
         | _ -> JSE_Call(JSE_Function(None, ["$v"], add_fallback cases), [js_of_expr None e])
 
@@ -166,8 +165,8 @@ and js_of_expr (binder:option<string>) (expr:exp) : expression_t =
         | Exp_constant(c) -> js_of_const c
         | Exp_abs([], e) -> js_of_expr binder e
         | Exp_abs((Inl _, _)::rest, e) -> 
-          js_of_expr binder (mk_Exp_abs(rest, e) tun expr.pos)
-        | Exp_abs((Inr x, _)::rest, e) -> js_of_fun binder x.v x.sort (mk_Exp_abs(rest, e) tun e.pos)
+          js_of_expr binder (mk_Exp_abs(rest, e) None expr.pos)
+        | Exp_abs((Inr x, _)::rest, e) -> js_of_fun binder x.v x.sort (mk_Exp_abs(rest, e) None e.pos)
         | Exp_app(e, args) -> JSE_Call(js_of_expr None e, args |> List.collect (function Inr e, _ -> [js_of_expr None e] | _ -> []))
         | Exp_match(e, c) -> js_of_match e c
         | Exp_let((_, bnds), e) -> let (bext, ee) = compress_let expr in
@@ -177,8 +176,7 @@ and js_of_expr (binder:option<string>) (expr:exp) : expression_t =
             ), [])
         | Exp_ascribed(e,_) -> js_of_expr binder e
         | Exp_meta(m) -> (match m with
-            | Meta_desugared(e, _) -> js_of_expr binder e
-            | Meta_datainst(e, _) -> js_of_expr binder e)
+            | Meta_desugared(e, _) -> js_of_expr binder e)
         | _ -> Util.print_any expr; JSE_Elision)
 
 and untype_expr (e:exp) =
@@ -187,13 +185,12 @@ and untype_expr (e:exp) =
         (p, (match cnd with None->None | Some(e)->Some(untype_expr e)), untype_expr v) in
     let unt_bnd (x,t,e) =  (x, t, untype_expr e) in
     match e.n with
-    | Exp_app(ee, args) -> mk_Exp_app(untype_expr ee, args |> List.filter (function Inl _, _ -> false | _ -> true)) tun e.pos
+    | Exp_app(ee, args) -> mk_Exp_app(untype_expr ee, args |> List.filter (function Inl _, _ -> false | _ -> true)) None e.pos
     | Exp_meta(m) -> (match m with
-        | Meta_desugared(exp, _) -> untype_expr exp
-        | Meta_datainst(exp, _) -> untype_expr exp)
-    | Exp_abs(bs, ee) -> syn e.pos tun <| mk_Exp_abs(bs |> List.filter (function Inl _, _ -> false | _ -> true), untype_expr ee)
-    | Exp_let((b,binds), e) -> syn e.pos tun <| mk_Exp_let((b,List.map unt_bnd binds), untype_expr e)
-    | Exp_match(e, pl) -> syn e.pos tun <| mk_Exp_match(untype_expr e, List.map unt_pat pl)
+        | Meta_desugared(exp, _) -> untype_expr exp)
+    | Exp_abs(bs, ee) -> syn e.pos None <| mk_Exp_abs(bs |> List.filter (function Inl _, _ -> false | _ -> true), untype_expr ee)
+    | Exp_let((b,binds), e) -> syn e.pos None <| mk_Exp_let((b,List.map unt_bnd binds), untype_expr e)
+    | Exp_match(e, pl) -> syn e.pos None <| mk_Exp_match(untype_expr e, List.map unt_pat pl)
     | _ -> e
 
 and comp_vars ct = match ct with
@@ -204,7 +201,7 @@ and type_vars ty = match ty with
     | Typ_fun(bs,c) -> (bs |> List.collect (function 
        | Inr x, _ -> 
         let tl = type_vars x.sort.n in
-        let hd = if is_null_binder (Inr x, false) then None else Some x.v in
+        let hd = if is_null_binder (Inr x, None) then None else Some x.v in
         hd::tl
        | _ -> [])) @ (comp_vars c.n)
     | Typ_lam(_,t) | Typ_refine({sort=t}, _) | Typ_app(t, _) 
@@ -225,11 +222,11 @@ and compile_def (d:sigelt) =
         | [] -> ()
         in aux 0 vnames
     in match d with
-    | Sig_datacon(n,ty,_,_,_) ->
+    | Sig_datacon(n,ty,_,_,_,_) ->
         let fields = type_vars ty.n in
         Util.smap_add constructors n.str ((match fields with []->Some(1) | _ -> None), None);
         add_fieldnames n.str fields
-    | Sig_bundle(defs, _, _) -> List.iter compile_def defs
+    | Sig_bundle(defs, _, _, _) -> List.iter compile_def defs
     | _ -> ()
 
 and js_of_exports isrec (id,typ,expr) : source_t =
@@ -242,8 +239,8 @@ and js_of_exports isrec (id,typ,expr) : source_t =
 
 let rec js_of_singl (p:sigelt) : list<source_t> =
     match p with
-    | Sig_let((isrec, bind),range, _) -> List.map (js_of_exports isrec) bind
-    | Sig_bundle(defs, range, _) -> List.iter compile_def defs; []
+    | Sig_let((isrec, bind),range, _, _) -> List.map (js_of_exports isrec) bind
+    | Sig_bundle(defs, _, _, range) -> List.iter compile_def defs; []
     | _ -> []
 
 let js_of_fstar (m:modul) : Ast.t =

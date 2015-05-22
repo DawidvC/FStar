@@ -21,8 +21,16 @@ open Microsoft.FStar.Range
 open Microsoft.FStar
 open Microsoft.FStar.Util
 
+(* AST produced by the parser, before desugaring
+   It is not stratified: a single type called "term" containing
+   expressions, formulas, types, and so on
+ *)
 type level = | Un | Expr | Type | Kind | Formula
 type lid = Syntax.LongIdent
+type imp = 
+    | FsTypApp
+    | Hash
+    | Nothing
 type term' = 
   | Wild      
   | Const     of Syntax.sconst
@@ -30,9 +38,9 @@ type term' =
   | Tvar      of ident
   | Var       of lid
   | Name      of lid
-  | Construct of lid * list<(term*bool)>               (* data, type: bool in each arg records an implicit *)
+  | Construct of lid * list<(term*imp)>               (* data, type: bool in each arg records an implicit *)
   | Abs       of list<pattern> * term
-  | App       of term * term * bool                    (* bool marks an explicitly provided implicit parameter *)
+  | App       of term * term * imp                    (* aqual marks an explicitly provided implicit parameter *)
   | Let       of bool * list<(pattern * term)> * term  (* bool is for let rec *)
   | Seq       of term * term
   | If        of term * term * term
@@ -46,10 +54,10 @@ type term' =
   | QForall   of list<binder> * list<term> * term 
   | QExists   of list<binder> * list<term> * term 
   | Refine    of binder * term 
+  | NamedTyp  of ident * term
   | Paren     of term
-  | Affine    of term
-  | Requires  of term
-  | Ensures   of term
+  | Requires  of term * option<string>
+  | Ensures   of term * option<string>
   | Labeled   of term * string * bool
 
 and term = {tm:term'; range:range; level:level}
@@ -60,15 +68,15 @@ and binder' =
   | Annotated of ident * term 
   | TAnnotated of ident * term 
   | NoName of term
-and binder = {b:binder'; brange:range; blevel:level; implicit:bool}
+and binder = {b:binder'; brange:range; blevel:level; aqual:Syntax.aqual}
 
 and pattern' = 
   | PatWild
   | PatConst    of Syntax.sconst 
   | PatApp      of pattern * list<pattern> 
-  | PatVar      of ident
+  | PatVar      of ident * bool         (* flag marks an implicit *)
   | PatName     of lid
-  | PatTvar     of ident
+  | PatTvar     of ident * bool         (* flag marks an implicit *)
   | PatList     of list<pattern>
   | PatTuple    of list<pattern> * bool (* dependent if flag is set *)
   | PatRecord   of list<(lid * pattern)>
@@ -90,6 +98,12 @@ type tycon =
    
 type qualifiers = list<Syntax.qualifier>
 
+type lift = {
+  msource: lid;
+  mdest:   lid;
+  lift_op: term
+}
+
 type decl' = 
   | Open of lid 
   | KindAbbrev of ident * list<binder> * knd
@@ -99,31 +113,23 @@ type decl' =
   | Tycon of qualifiers * list<tycon>
   | Val of qualifiers * ident * term  (* bool is for logic val *)
   | Exception of ident * option<term>
-  | MonadLat of list<monad_sig> * list<lift>
+  | NewEffect of qualifiers * effect_decl
+  | SubEffect of lift
+  | Pragma of pragma
 and decl = {d:decl'; drange:range}
-and monad_sig = {
-  mon_name:ident;
-  mon_total:bool;
-  mon_decls:list<decl>;
-  mon_abbrevs:list<(ident * list<binder> * typ)>
- }
-and lift = {
-  msource: ident;
-  mdest: ident;
-  lift_op: term
- }
+and effect_decl = 
+  | DefineEffect      of ident * list<binder> * term * list<decl>
+  | RedefineEffect of ident * list<binder> * term
 
-type pragma =
-  | Monadic of lid * lid * lid
-  | Dynamic 
 type modul = 
   | Module of LongIdent * list<decl>
-  | Interface of LongIdent * list<decl>
-type file = list<pragma> * list<modul>
+  | Interface of LongIdent * list<decl> * bool (* flag to mark admitted interfaces *)
+type file = list<modul>
+type inputFragment = either<file,list<decl>>
 
 (********************************************************************************)
 let mk_decl d r = {d=d; drange=r}
-let mk_binder b r l i = {b=b; brange=r; blevel=l; implicit=i}
+let mk_binder b r l i = {b=b; brange=r; blevel=l; aqual=i}
 let mk_term t r l = {tm=t; range=r; level=l}
 let mk_pattern p r = {pat=p; prange=r}
 let un_curry_abs ps body = match body.tm with 
@@ -131,7 +137,7 @@ let un_curry_abs ps body = match body.tm with
     | _ -> Abs(ps, body)
 let mk_function branches r1 r2 = 
   let x = Util.genident (Some r1) in
-  mk_term (Abs([mk_pattern (PatVar x) r1],
+  mk_term (Abs([mk_pattern (PatVar(x,false)) r1],
                mk_term (Match(mk_term (Var(lid_of_ids [x])) r1 Expr, branches)) r2 Expr))
     r2 Expr
 let un_function p tm = match p.pat, tm.tm with 
@@ -142,11 +148,13 @@ let lid_with_range lid r = lid_of_path (path_of_lid lid) r
 
 let to_string_l sep f l = 
   String.concat sep (List.map f l)
-
+let imp_to_string = function 
+    | Hash -> "#"
+    | _ -> ""
 let rec term_to_string (x:term) = match x.tm with 
   | Wild -> "_"
-  | Requires t -> Util.format1 "(requires %s)" (term_to_string t)
-  | Ensures t -> Util.format1 "(ensures %s)" (term_to_string t)
+  | Requires (t, _) -> Util.format1 "(requires %s)" (term_to_string t)
+  | Ensures (t, _) -> Util.format1 "(ensures %s)" (term_to_string t)
   | Labeled (t, l, _) -> Util.format2 "(labeled %s %s)" l (term_to_string t)
   | Const c -> Print.const_to_string c
   | Op(s, xs) -> Util.format2 "%s(%s)" s (String.concat ", " (List.map (fun x -> x|> term_to_string) xs))
@@ -154,12 +162,12 @@ let rec term_to_string (x:term) = match x.tm with
   | Var l
   | Name l -> Print.sli l
   | Construct(l, args) -> 
-    Util.format2 "(%s %s)" (Print.sli l) (to_string_l " " (fun (a,imp) -> Util.format2 "%s%s" (if imp then "#" else "") (term_to_string a)) args)
+    Util.format2 "(%s %s)" (Print.sli l) (to_string_l " " (fun (a,imp) -> Util.format2 "%s%s" (imp_to_string imp) (term_to_string a)) args)
   | Abs(pats, t) when (x.level = Expr) -> 
     Util.format2 "(fun %s -> %s)" (to_string_l " " pat_to_string pats) (t|> term_to_string)
   | Abs(pats, t) when (x.level = Type) -> 
     Util.format2 "(fun %s => %s)" (to_string_l " " pat_to_string pats) (t|> term_to_string)
-  | App(t1, t2, imp) -> Util.format3 "%s %s%s" (t1|> term_to_string) (if imp then "#" else "") (t2|> term_to_string)
+  | App(t1, t2, imp) -> Util.format3 "%s %s%s" (t1|> term_to_string) (imp_to_string imp) (t2|> term_to_string)
   | Let(false, [(pat,tm)], body) -> 
     Util.format3 "let %s = %s in %s" (pat|> pat_to_string) (tm|> term_to_string) (body|> term_to_string)
   | Let(_, lbs, body) -> 
@@ -205,8 +213,12 @@ let rec term_to_string (x:term) = match x.tm with
       (t|> term_to_string)
   | Refine(b, t) -> 
     Util.format2 "%s:{%s}" (b|> binder_to_string) (t|> term_to_string)      
+  | NamedTyp(x, t) -> 
+    Util.format2 "%s:%s" x.idText  (t|> term_to_string)        
   | Paren t -> Util.format1 "(%s)" (t|> term_to_string)
-  | Affine t -> Util.format1 "!%s" (t|> term_to_string)
+  | Product(bs, t) ->
+        Util.format2 "Unidentified product: [%s] %s"
+          (bs |> List.map binder_to_string |> String.concat ",") (t|> term_to_string)
   | t -> failwith "Missing case in term_to_string"
 
 and binder_to_string x = 
@@ -216,14 +228,19 @@ and binder_to_string x =
   | TAnnotated(i,t)
   | Annotated(i,t) -> Util.format2 "%s:%s" (i.idText) (t |> term_to_string)
   | NoName t -> t |> term_to_string in
-  if x.implicit then Util.format1 "#%s" s else s
+  match x.aqual with 
+    | Some Implicit -> Util.format1 "#%s" s 
+    | Some Equality -> Util.format1 "=%s" s
+    | _ -> s
 
 and pat_to_string x = match x.pat with 
   | PatWild -> "_"
   | PatConst c -> Print.const_to_string c
   | PatApp(p, ps) -> Util.format2 "(%s %s)" (p |> pat_to_string) (to_string_l " " pat_to_string ps)
-  | PatTvar i 
-  | PatVar i -> i.idText
+  | PatTvar (i, true)
+  | PatVar (i, true) -> Util.format1 "#%s" i.idText
+  | PatTvar(i, false)
+  | PatVar (i, false) -> i.idText
   | PatName l -> Print.sli l
   | PatList l -> Util.format1 "[%s]" (to_string_l "; " pat_to_string l)
   | PatTuple (l, false) -> Util.format1 "(%s)" (to_string_l ", " pat_to_string l)
@@ -234,6 +251,53 @@ and pat_to_string x = match x.pat with
   
 let error msg tm r =
  let tm = tm |> term_to_string in
-  let tm = if String.length tm >= 80 then Util.substring tm 0 77 ^ "..." else tm in 
-  raise (Error(msg^"\n"^tm, r))
+ let tm = if String.length tm >= 80 then Util.substring tm 0 77 ^ "..." else tm in 
+ raise (Error(msg^"\n"^tm, r))
+
+let consPat r hd tl = PatApp(mk_pattern (PatName Const.cons_lid) r, [hd;tl])
+let consTerm r hd tl = mk_term (Construct(Const.cons_lid, [(hd, Nothing);(tl, Nothing)])) r Expr
+let lexConsTerm r hd tl = mk_term (Construct(Const.lexcons_lid, [(hd, Nothing);(tl, Nothing)])) r Expr
+
+let mkConsList r elts =  
+  let nil = mk_term (Construct(Const.nil_lid, [])) r Expr in
+    List.fold_right (fun e tl -> consTerm r e tl) elts nil
+
+let mkLexList r elts = 
+  let nil = mk_term (Construct(Const.lextop_lid, [])) r Expr in
+  List.fold_right (fun e tl -> lexConsTerm r e tl) elts nil
+
+let mkApp t args r = match args with 
+  | [] -> t 
+  | _ -> match t.tm with 
+      | Name s -> mk_term (Construct(s, args)) r Un
+      | _ -> List.fold_left (fun t (a,imp) -> mk_term (App(t, a, imp)) r Un) t args
+
+let mkExplicitApp t args r = match args with 
+  | [] -> t 
+  | _ -> match t.tm with 
+      | Name s -> mk_term (Construct(s, (List.map (fun a -> (a, Nothing)) args))) r Un
+      | _ -> List.fold_left (fun t a -> mk_term (App(t, a, Nothing)) r Un) t args
+
+let mkFsTypApp t args r = 
+  mkApp t (List.map (fun a -> (a, FsTypApp)) args) r
+
+let mkTuple args r = 
+  let cons = Util.mk_tuple_data_lid (List.length args) r in 
+  mkApp (mk_term (Name cons) r Expr) (List.map (fun x -> (x, Nothing)) args) r
+
+let mkDTuple args r = 
+  let cons = Util.mk_dtuple_data_lid (List.length args) r in 
+  mkApp (mk_term (Name cons) r Expr) (List.map (fun x -> (x, Nothing)) args) r
     
+let mkRefinedBinder id t refopt m implicit = 
+  let b = mk_binder (Annotated(id, t)) m Type implicit in
+  match refopt with 
+    | None -> b 
+    | Some t -> mk_binder (Annotated(id, mk_term (Refine(b, t)) m Type)) m Type implicit
+
+let rec extract_named_refinement t1  = 
+    match t1.tm with 
+	| NamedTyp(x, t) -> Some (x, t, None) 
+	| Refine({b=Annotated(x, t)}, t') ->  Some (x, t, Some t')
+    | Paren t -> extract_named_refinement t  
+	| _ -> None

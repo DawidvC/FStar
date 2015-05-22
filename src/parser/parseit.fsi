@@ -17,5 +17,7 @@
 module Microsoft.FStar.Parser.ParseIt
 open Microsoft.FStar.Parser
 open Microsoft.FStar.Util
+open Microsoft.FStar
 
-val parse_file: either<string,string> -> either<AST.file, string>
+val parse: either<string,string> -> either<AST.inputFragment, (string * Range.range)>
+val read_build_config:string -> list<string>

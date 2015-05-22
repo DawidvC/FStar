@@ -29,14 +29,30 @@ let return_all x = x
 exception Impos
 exception NYI of string
 exception Failure of string
+let max_int: int = System.Int32.MaxValue
 
 type proc = {m:Object; 
              outbuf:StringBuilder;
              proc:Process;
-             killed:ref<bool>}
+             killed:ref<bool>;
+             id:string}
 let all_procs : ref<list<proc>> = ref []
-
-let start_process (prog:string) (args:string) (cond:string -> bool) : proc = 
+open System.Threading
+let global_lock = new Object()
+let monitor_enter m = System.Threading.Monitor.Enter(m)
+let monitor_exit m = System.Threading.Monitor.Exit(m)
+let monitor_wait m = ignore <| System.Threading.Monitor.Wait(m)
+let monitor_pulse m = System.Threading.Monitor.Pulse(m)
+let current_tid () = System.Threading.Thread.CurrentThread.ManagedThreadId
+let sleep n = System.Threading.Thread.Sleep(0+n)
+let atomically (f:unit -> 'a) = 
+    System.Threading.Monitor.Enter(global_lock);
+    let result = f () in
+    System.Threading.Monitor.Exit(global_lock);
+    result
+let spawn (f:unit -> unit) = let t = new Thread(f) in t.Start()
+let ctr = ref 0
+let start_process (id:string) (prog:string) (args:string) (cond:string -> string -> bool) : proc = 
     let signal = new Object() in
     let with_sig f = 
         System.Threading.Monitor.Enter(signal);
@@ -59,27 +75,55 @@ let start_process (prog:string) (args:string) (cond:string -> bool) : proc =
                 else with_sig(fun () -> 
                            ignore <| driverOutput.Append(args.Data);
                            ignore <| driverOutput.Append("\n");
-                           if cond args.Data
+                           if null = args.Data
+                           then (Printf.printf "Unexpected output from %s\n%s\n" prog (driverOutput.ToString()));
+                           if null = args.Data || cond id args.Data
                            then System.Threading.Monitor.Pulse(signal))));
+        proc.Exited.AddHandler(
+             EventHandler(fun _ _ ->
+                if !killed then ()
+                else
+                    System.Threading.Monitor.Enter(signal);
+                    killed := true;
+                    Printf.fprintf stdout "%s exited inadvertently\n%s\n" prog (driverOutput.ToString());
+                    stdout.Flush();
+                    System.Threading.Monitor.Exit(signal);
+                    exit(1)));
         proc.StartInfo <- startInfo;
         proc.Start() |> ignore;
         proc.BeginOutputReadLine();
+        incr ctr;
         let proc = {m=signal;
                     outbuf=driverOutput;
                     proc=proc;
-                    killed=killed} in
+                    killed=killed;
+                    id=prog ^ ":" ^id^ "-" ^ (string_of_int !ctr)} in
         all_procs := proc::!all_procs;
+//        Printf.printf "Started process %s\n" (proc.id);
         proc
+let tid () = System.Threading.Thread.CurrentThread.ManagedThreadId |> string_of_int   
 
-let ask_process (p:proc) (stdin:string) : string = 
-    ignore <| p.outbuf.Clear();
+let ask_process (p:proc) (input:string) : string = 
     System.Threading.Monitor.Enter(p.m);
-    p.proc.StandardInput.WriteLine(stdin);
+    //Printf.printf "Thread %s is asking process %s\n" (tid()) p.id;
+    ignore <| p.outbuf.Clear();
+    //Printf.printf "Thread %s is writing to process %s ... responding?=%A\n" (tid()) p.id p.proc.Responding;
+    //Printf.fprintf stderr "Thread %s is writing to process %s:\n%s\n" (tid()) p.id input;
+//    if p.id = "z3.exe:bg"
+//    then begin
+//        Printf.printf "Thread BG break\n"
+//    end;
+    p.proc.StandardInput.WriteLine(input);
+//    Printf.printf "Thread %s is waiting for process to reply\n" (tid());
+//    flush(stdout);
     ignore <| System.Threading.Monitor.Wait(p.m);
+//    Printf.printf "Thread %s is continuing with reply from process %s\n" (tid()) p.id;
+    let x = p.outbuf.ToString() in
     System.Threading.Monitor.Exit(p.m);
-    p.outbuf.ToString()
+    x
 
 let kill_process (p:proc) = 
+//    Printf.printf "Killing process %s\n" (p.id);
     p.killed := true;
     System.Threading.Monitor.Enter(p.m);
     p.proc.StandardInput.Close();
@@ -102,23 +146,26 @@ let run_proc (name:string) (args:string) (stdin:string) : bool * string * string
   let stderr = proc.StandardError.ReadToEnd() in 
   result, stdout, stderr
 
-open Prims
-//type set<'a> = Collections.Set<Boxed<'a>> * ('a -> Boxed<'a>)
-//
-//let new_set (cmp:'a -> 'a -> int) (hash:'a -> int) : set<'a> = 
-//    let box v = new Boxed<'a>(v, cmp, hash) in
-//    (new Collections.Set<Boxed<'a>>([]), box)
-//
-//let set_add a ((s, b):set<'a>) = s.Add (b a), b
-//let set_remove a ((s1, b):set<'a>) = s1.Remove(b a), b
-//let set_mem a ((s, b):set<'a>) = s.Contains (b a)
-//let set_union ((s1, b):set<'a>) ((s2, _):set<'a>) = Set.union s1 s2, b
-//let set_intersect ((s1, b):set<'a>) ((s2, _):set<'a>) = Set.intersect s1 s2, b
-//let set_is_subset_of ((s1, _): set<'a>) ((s2, _):set<'a>) = s1.IsSubsetOf(s2)
-//let set_count ((s1, _):set<'a>) = s1.Count
-//let set_difference ((s1, b):set<'a>) ((s2, _):set<'a>) : set<'a> = Set.difference s1 s2, b
-//let set_elements ((s1, b):set<'a>) :list<'a> = Set.toList s1 |> List.map (fun x -> x.unbox)
+let get_file_extension (fn: string) :string = Path.GetExtension fn
 
+type stream_reader = System.IO.StreamReader (* not relying on representation *)
+let open_stdin () = new System.IO.StreamReader(System.Console.OpenStandardInput()) 
+let is_end_of_stream (s: stream_reader) = s.EndOfStream
+let read_line (s:stream_reader) = 
+    if is_end_of_stream s
+    then None
+    else Some <| s.ReadLine()
+
+type string_builder = System.Text.StringBuilder (* not relying on representation *)
+let new_string_builder () = new System.Text.StringBuilder()
+let clear_string_builder (s:string_builder) = s.Clear() |> ignore
+let string_of_string_builder (s: string_builder) = s.ToString() 
+let string_builder_append (s: string_builder) (t:string) = s.Append t |> ignore
+
+let message_of_exn (e:exn) = e.Message
+let trace_of_exn (e:exn) = e.StackTrace
+
+open Prims
 type set<'a> = (list<'a> * ('a -> 'a -> bool))
 
 let set_is_empty ((s, _):set<'a>) = 
@@ -150,10 +197,18 @@ type smap<'value>=HashMultiMap<string, 'value>
 let smap_create<'value> (i:int) = new HashMultiMap<string,'value>(i, HashIdentity.Structural)
 let smap_clear<'value> (s:smap<'value>) = s.Clear()
 let smap_add (m:smap<'value>) k (v:'value) = m.Add(k,v)
+let smap_of_list<'value> (l:list<string*'value>) = 
+    let s = smap_create (List.length l) in
+    List.iter (fun (x,y) -> smap_add s x y) l;
+    s
 let smap_try_find (m:smap<'value>) k = m.TryFind(k)
 let smap_fold (m:smap<'value>) f a = m.Fold f a
 let smap_remove (m:smap<'value>) k = m.Remove k
 let smap_keys (m:smap<'value>) = m.Fold (fun k v keys -> k::keys) []
+let smap_copy (m:smap<'value>) = 
+    let n = smap_create (m.Count) in
+    smap_fold m (fun k v () -> smap_add n k v) ();
+    n
 let pr  = Printf.printf
 let spr = Printf.sprintf 
 let fpr = Printf.fprintf 
@@ -170,16 +225,24 @@ let unicode_of_string (string:string) = unicodeEncoding.GetBytes(string)
 
 let char_of_int (i:int) = char i
 let int_of_string (s:string) = int_of_string s
-let int_of_char (s:char) = int s
-
+let int_of_char (s:char) = int32 s
+let int_of_byte (s:byte) = int32 s
+let int_of_uint8 (i:uint8) = int32 i
 let uint16_of_int (i:int) = uint16 i
+let byte_of_char (s:char) = byte s
 
 let float_of_byte (b:byte) = (float)b
 let float_of_int32 (n:int32) = (float)n
 let float_of_int64 (n:int64) = (float)n
 
+let int_of_int32 (i:int32) = i
+let int32_of_int (i:int) = int32 i
+
 let string_of_int   i = string_of_int i
+let string_of_int64  (i:int64) = i.ToString()
+let string_of_int32 i = string_of_int i
 let string_of_float i = string_of_float i
+let hex_string_of_byte  (i:byte) = spr "%x" i
 let string_of_char  (i:char) = spr "%c" i
 let string_of_bytes (i:byte[]) = string_of_unicode i
 let starts_with (s1:string) (s2:string) = s1.StartsWith(s2)
@@ -193,7 +256,7 @@ let replace_char (s:string) (c1:char) (c2:char) = s.Replace(c1,c2)
 let replace_string (s:string) (s1:string) (s2:string) = s.Replace(s1, s2)
 let hashcode (s:string) = s.GetHashCode()
 let compare (s1:string) (s2:string) = s1.CompareTo(s2)
-let splitlines (s:string) = Array.toList (s.Split([|Environment.NewLine|], StringSplitOptions.None))
+let splitlines (s:string) = Array.toList (s.Split([|Environment.NewLine;"\n"|], StringSplitOptions.None))
 let split (s1:string) (s2:string) = Array.toList (s1.Split([|s2|], StringSplitOptions.None))
 
 let iof = int_of_float
@@ -211,22 +274,15 @@ let format2 f a b = format f [a;b]
 let format3 f a b c = format f [a;b;c]
 let format4 f a b c d = format f [a;b;c;d]
 let format5 f a b c d e = format f [a;b;c;d;e]
+let format6 f a b c d e g = format f [a;b;c;d;e;g]
+
 
 let fprint1 a b = print_string <| format1 a b
 let fprint2 a b c = print_string <| format2 a b c
 let fprint3 a b c d = print_string <| format3 a b c d
 let fprint4 a b c d e = print_string <| format4 a b c d e
 let fprint5 a b c d e f = print_string <| format5 a b c d e f
-        
-let err_out : option<System.IO.StreamWriter> ref = ref None 
-let open_err_out (s:string) = (err_out := Some (new System.IO.StreamWriter(s)))
-let flush_err_out () = match !err_out with None -> () | Some e -> (e.Flush(); e.Close())
-
-let try_find_position matcher f = 
-  let rec aux pos = function
-    | [] -> None
-    | a::tl -> if (matcher a) then Some pos else aux (pos+1us) tl
-  in aux 0us f
+let fprint6 a b c d e f g = print_string <| format6 a b c d e f g
       
 type either<'a,'b> =
   | Inl of 'a
@@ -241,15 +297,17 @@ let right = function
        
 let (-<-) f g x = f (g x)
 
-let nodups f l = 
+let find_dup f l = 
   let rec aux = function 
     | hd::tl -> 
         let hds, tl' = List.partition (f hd) tl in 
           (match hds with 
              | [] -> aux tl' 
-             | _ -> false)
-    | _ -> true in
+             | _ -> Some hd)
+    | _ -> None in
     aux l
+
+let nodups f l = find_dup f l |> Option.isNone
 
 let remove_dups f l = 
    let rec aux out = function 
@@ -276,12 +334,17 @@ let find_opt f l =
     | hd::tl -> if f hd then Some hd else aux tl in 
     aux l
 
+let try_find_index f l = List.tryFindIndex f l
+
 let sort_with f l = List.sortWith f l 
 
 let set_eq f l1 l2 = 
-  let l1 = sort_with f l1 in
-  let l2 = sort_with f l2 in
-  List.forall2 (fun l1 l2 -> f l1 l2 = 0) l1 l2
+  let eq x y = f x y = 0 in 
+  let l1 = sort_with f l1 |> remove_dups eq in
+  let l2 = sort_with f l2 |> remove_dups eq in
+  if List.length l1 <> List.length l2 
+  then false
+  else List.forall2 eq l1 l2
 
 let bind_opt opt f = 
     match opt with 
@@ -292,6 +355,15 @@ let map_opt opt f =
     match opt with
       | None -> None
       | Some x -> Some (f x)
+
+let try_find_i f l = 
+    let rec aux i = function 
+        | [] -> None
+        | hd::tl -> 
+            if f i hd 
+            then Some(i, hd)
+            else aux (i+1) tl in
+    aux 0 l
 
 let rec find_map l f = 
     match l with 
@@ -334,11 +406,23 @@ let first_N n l =
   in
   f [] 0 l
 
+let rec nth_tail n l =
+   if n=0 then l else nth_tail (n - 1) (List.tl l)
+
 let prefix l = 
     match List.rev l with 
       | hd::tl -> List.rev tl, hd
       | _ -> failwith "impossible"
-          
+
+let prefix_until f l = 
+    let rec aux prefix = function
+        | [] -> None
+        | hd::tl -> 
+            if f hd then Some (List.rev prefix, hd, tl)
+            else aux (hd::prefix) tl in
+    aux [] l
+
+        
 let string_to_ascii_bytes: string -> byte [] = fun s -> asciiEncoding.GetBytes(s)
 let ascii_bytes_to_string: byte [] -> string = fun b -> asciiEncoding.GetString(b)
 let mk_ref a = ref a
@@ -406,10 +490,80 @@ let for_range lo hi f =
   done
 
 let incr r = r := !r + 1
+let decr r = r := !r - 1
 let geq (i:int) (j:int) = i >= j
+
+let get_exec_dir () = 
+    let asm = System.Reflection.Assembly.GetEntryAssembly() in
+    Path.GetDirectoryName(asm.Location)
 
 let expand_environment_variable s = 
   System.Environment.ExpandEnvironmentVariables ("%"^s^"%")
 
 let physical_equality (x:'a) (y:'a) = LanguagePrimitives.PhysicalEquality (box x) (box y)
 let check_sharing a b msg = if physical_equality a b then fprint1 "Sharing OK: %s\n" msg else fprint1 "Sharing broken in %s\n" msg
+
+let is_letter_or_digit = Char.IsLetterOrDigit
+let is_punctuation = Char.IsPunctuation
+let is_symbol = Char.IsSymbol
+
+type oWriter = {
+    write_byte: byte -> unit;
+    write_bool: bool -> unit;
+    write_int: int -> unit;
+    write_int32: int32 -> unit;
+    write_int64: int64 -> unit;
+    write_char: char -> unit;
+    write_double: double -> unit;
+    write_bytearray: array<byte> -> unit;
+    write_string: string -> unit;
+
+    close: unit -> unit
+}
+
+type oReader = {
+    read_byte: unit -> byte;
+    read_bool: unit -> bool;
+    read_int: unit -> int;
+    read_int32: unit -> int32;
+    read_int64: unit -> int64;
+    read_char: unit -> char;
+    read_double: unit -> double;
+    read_bytearray: unit -> array<byte>;
+    read_string: unit -> string;
+
+    close: unit -> unit
+}
+
+let get_owriter (file:string) : oWriter =
+    let w = new BinaryWriter(File.Open(file, FileMode.Create)) in
+    {
+        write_byte = w.Write;
+        write_bool = w.Write;
+        write_int = w.Write;
+        write_int32 = w.Write;
+        write_int64 = w.Write;
+        write_char = w.Write;
+        write_double = w.Write;
+        write_bytearray = fun a -> w.Write(a.Length); w.Write(a);
+        write_string = w.Write;
+
+        close = w.Close;
+    }
+
+let get_oreader (file:string) : oReader =
+    let r = new BinaryReader(File.Open(file, FileMode.Open)) in
+    {
+        read_byte = r.ReadByte;
+        read_bool = r.ReadBoolean;
+        read_int = r.ReadInt32;
+        read_int32 = r.ReadInt32;
+        read_int64 = r.ReadInt64;
+        read_char = r.ReadChar;
+        read_double = r.ReadDouble;
+        read_bytearray = fun _ -> let n = r.ReadInt32() in r.ReadBytes(n)
+        read_string = r.ReadString;
+
+        close = r.Close
+    }
+

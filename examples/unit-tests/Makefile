@@ -1,49 +1,24 @@
-# --------------------------------------------------------------------
-ifeq ($(OS),Windows_NT)
-RUNTIME =
-MSBUILD = msbuild
-else
-RUNTIME = mono
-MSBUILD = xbuild
-endif
+VERFILES=unit1.fst unit2.fst testset.fst short-circuit.fst
+include ../Makefile.include
+NEGFILES=negative-tests.fst
 
-FSTAR_HOME = ../..
-STDLIB = $(addprefix $(FSTAR_HOME)/lib/, string.fst st.fst partialmap.fst)
-FSTAR      = $(RUNTIME) ../../bin/fstar.exe --fstar_home $(FSTAR_HOME) $(STDLIB) $(OTHERFLAGS)
+all: .all.ver testmref mac2 all-neg
 
-all: all-lax all-ver
+all-neg: $(NEGFILES)
+	-$(FSTAR) --admit_fsi Set $(STDLIB) $^
+	@echo "---------------------------------------"
+	@echo "       Done ! EXPECT 32 FAILURES       "
+	@echo "---------------------------------------"
 
-all-ver: unit1.fst testset.fst millionaires.fst listlemmas.fst
-	$(FSTAR) --verify unit1.fst testset.fst millionaires.fst listlemmas.fst
 
-all-lax: rec.fst pat.fst format.fst 
-	$(FSTAR) $^
+inverse:
+	$(FSTAR) --admit_fsi Seq $(FSTAR_HOME)/lib/classical.fst $(FSTAR_HOME)/lib/ext.fst $(FSTAR_HOME)/lib/seq.fsi inverse.fst --max_fuel 0 --max_ifuel 3 --initial_ifuel 3 --initial_fuel 0
 
-%.tc: %.fst
-	$(FSTAR) $^
+testmref:
+	$(FSTAR) --admit_fsi Set --logQueries --verify_module TestMRef --max_fuel 1 --max_ifuel 1 --initial_fuel 1 --initial_ifuel 1 $(FSTAR_HOME)/lib/ext.fst $(FSTAR_HOME)/lib/set.fsi $(FSTAR_HOME)/lib/heap.fst $(FSTAR_HOME)/lib/st.fst $(FSTAR_HOME)/lib/mref.fst testmref.fst
 
-%.ver: %.fst
-	$(FSTAR) --verify $^
+test:
+	$(FSTAR) --admit_fsi Seq $(FSTAR_HOME)/lib/classical.fst $(FSTAR_HOME)/lib/ext.fst $(FSTAR_HOME)/lib/seq.fsi $(FSTAR_HOME)/lib/seqproperties.fst test.fst --admit_smt_queries true --max_fuel 0 --max_ifuel 0 --initial_ifuel 0 --initial_fuel 0
 
-prims: 
-	$(FSTAR)  
-
-utils:
-	$(FSTAR) --codegen OCaml --prims prims.fst utils.fst
-
-stdlib:
-	$(FSTAR) --codegen OCaml $(STDLIB)
-
-#NS: Moved the specifics from here to the mitls repo. 
-#This target remains here just to not suprise anyone ... we should remove it soon.
-
-# # Change the following line to the location of the top MITLS directory "lang-sec/msrc/cvk/samples/protocols/tls"
-MITLS=../../../mitls
-mitls:
-	make -C $(MITLS)/ML mitls
-
-wc-mitls:
-	make -C $(MITLS)/ML wc
-
-clean:
-	rm *~ 
+mac2:
+	$(FSTAR) $(FSTAR_HOME)/lib/ext.fst $(FSTAR_HOME)/lib/array.fst $(FSTAR_HOME)/lib/set.fsi $(FSTAR_HOME)/lib/set.fst $(FSTAR_HOME)/lib/heap.fst $(FSTAR_HOME)/lib/st.fst $(FSTAR_HOME)/lib/list.fst mac2.fst

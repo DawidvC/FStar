@@ -9,7 +9,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>format</RootNamespace>
     <AssemblyName>format</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <Name>format</Name>
     <TargetFrameworkProfile />
   </PropertyGroup>
@@ -41,6 +41,9 @@
     </Reference>
     <Reference Include="FSharp.PowerPack.Compatibility">
       <HintPath>..\..\bin\FSharp.PowerPack.Compatibility.dll</HintPath>
+    </Reference>
+    <Reference Include="FSharp.PPrint">
+      <HintPath>..\..\bin\FSharp.PPrint.dll</HintPath>
     </Reference>
     <Reference Include="mscorlib" />
     <Reference Include="System" />

@@ -9,7 +9,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>parser</RootNamespace>
     <AssemblyName>parser</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <Name>parser</Name>
     <TargetFrameworkProfile />
     <SolutionDir Condition="$(SolutionDir) == '' Or $(SolutionDir) == '*Undefined*'">..\..\VS\</SolutionDir>
@@ -75,9 +75,11 @@
       <OtherFlags>--unicode</OtherFlags>
     </FsLex>
     <Compile Include="ast.fs" />
+    <Compile Include="parseutil.fs" />
     <Compile Include="parse.fs" />
     <Compile Include="lexhelp.fs" />
     <Compile Include="lex.fs" />
+    <None Include="packages.config" />
     <Compile Include="dsenv.fsi" />
     <Compile Include="dsenv.fs" />
     <Compile Include="desugar.fsi" />
@@ -85,7 +87,6 @@
     <Compile Include="parseit.fsi" />
     <Compile Include="parseit.fs" />
     <Compile Include="driver.fs" />
-    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FSharp.PowerPack">

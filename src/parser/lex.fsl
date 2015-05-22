@@ -21,57 +21,36 @@
  * (c) Microsoft Corporation. All rights reserved 
  *-----------------------------------------------------------------------*)
 
-open System
-open Microsoft.FSharp.Compatibility
-open Microsoft.FSharp.Compatibility.OCaml.Pervasives
-open Microsoft.FSharp.Text.Lexing
-open Microsoft.FStar
 open Microsoft.FStar.Range
 open Microsoft.FStar.Parser
 open Microsoft.FStar.Parser.Parse
 open Microsoft.FStar.Parser.AST
-(* open Microsoft.FStar.Parser.Lexhelp *)
+open Microsoft.FStar.Parser.Util
 
-let lexeme (lexbuf : Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*UnicodeLexing.Lexbuf*)) = 
-    Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*UnicodeLexing.Lexbuf*).LexemeString(lexbuf)
-let ulexeme lexbuf = lexeme lexbuf
-
-let adjust_lexbuf_start_pos (lexbuf:Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*UnicodeLexing.Lexbuf*)) p =  lexbuf.StartPos <- p 
-
-let string_trim_both s n m = String.sub s n (String.length s - (n+m))
+let string_trim_both s n m = Util.substring s n (String.length s - (n+m))
 let trim_both   lexbuf n m = string_trim_both (ulexeme lexbuf) n m
 let trim_right  lexbuf n = trim_both lexbuf 0 n
 let trim_left   lexbuf n = trim_both lexbuf n 0
 
 let fail lexbuf msg dflt =
-     let m = GetLexerRange  lexbuf in 
+     let m = getLexerRange lexbuf in 
      errorR(Absyn.Syntax.Error(msg,m));
      dflt
         
-
 let trim_to_i32 lexbuf n = 
-    try int32 (trim_right lexbuf n)
+    try Util.int_of_string (trim_right lexbuf n)
     with _ -> fail lexbuf "This number is outside the allowable range for this integer type" 0
 
-let CheckExprOp lexbuf = 
+let checkExprOp lexbuf = 
   if String.contains (ulexeme lexbuf)  ':' 
-  then errorR(Absyn.Syntax.Error("':' is no longer permitted as a character in operator names" , GetLexerRange lexbuf))
+  then errorR(Absyn.Syntax.Error("':' is no longer permitted as a character in operator names" , getLexerRange lexbuf))
 
-let quote_op_is_raw s = String.length s >= 1 && s.[0] = '@'
-
-let rev_string s = 
-  let n = String.length s in 
-  let res = Buffer.create n in 
-  for i = n - 1 downto 0 do Buffer.add_char res s.[i] done;
-  Buffer.contents res
-  
 let unexpected_char lexbuf =
-    LEX_FAILURE ("Unexpected character '"^(lexeme lexbuf)^"'")
-
+    failwith ("Unexpected character '"^(lexeme lexbuf)^"'")
 
 let start_string (lexbuf: Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*UnicodeLexing.Lexbuf*)) =
     let buf = Bytes.create 100 in 
-    let m = GetLexerRange  lexbuf in
+    let m = getLexerRange  lexbuf in
     let startp = lexbuf.StartPos in  
     let fin = (fun m2 b s -> 
                      let endp = lexbuf.EndPos in  
@@ -88,13 +67,18 @@ let start_string (lexbuf: Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*Unicode
                         STRING s)  in
     buf,fin,m
 
-
+let lc = Util.mk_ref 1
+let rec mknewline n lexbuf =
+	if n > 0 then (newline lexbuf; Util.incr lc; mknewline (n-1) lexbuf)
+    
 type delimiters = {
   angle:ref<int>;
   paren:ref<int>
 }
 
+let n_typ_apps = Util.mk_ref 0
 let is_typ_app (args:Lexhelp.lexargs) (lexbuf:Microsoft.FSharp.Text.Lexing.LexBuffer<char> (*UnicodeLexing.Lexbuf*)) = 
+ if not !Options.fs_typ_app then false else
  try
    let char_ok = new System.Text.RegularExpressions.Regex(@"\w|\s|\(|\)|<|>|\*|-|'|,|\.") in
    let balanced (contents : string) pos =
@@ -117,10 +101,16 @@ let is_typ_app (args:Lexhelp.lexargs) (lexbuf:Microsoft.FSharp.Text.Lexing.LexBu
       else (upd i; aux (i + 1)) in
       aux (pos + 1) in
    let res = balanced args.contents lexbuf.StartPos.AbsoluteOffset in
+   if res then Util.incr n_typ_apps;
    res
  with e -> printfn "Resolving typ_app<...> syntax failed: %A" e; false 
-                        
+
+let is_typ_app_gt () = 
+	if !n_typ_apps > 0 
+	then (Util.decr n_typ_apps; true)
+	else false	                    
 } 
+
 
 let letter = '\Lu' | '\Ll' | '\Lt' | '\Lm' | '\Lo' | '\Nl'
 let digit = '\Nd'
@@ -128,8 +118,6 @@ let hex = ['0'-'9'] | ['A'-'F'] | ['a'-'f']
 let truewhite = [' ']
 let offwhite = ['\t']
 let anywhite = truewhite | offwhite
-let op_char = '!'|'$'|'%'|'&'|'*'|'+'|'-'|'.'|'/'|'<'|'='|'?'|'^'|'|'|'~'|':'
-let ignored_op_char = '.' | '$'
 let xinteger = 
   (  '0' ('x'| 'X')  hex + 
    | '0' ('o'| 'O')  (['0'-'7']) + 
@@ -169,7 +157,8 @@ let hexgraph_short = '\\' 'x' hex hex
 let unicodegraph_short = '\\' 'u' hex hex hex hex
 let unicodegraph_long =  '\\' 'U' hex hex hex hex hex hex hex hex
 let newline = ('\n' | '\r' '\n')
-
+let custom_op_char = '&'|'@'|'+'|'-'|'/'|'<'|'='|'|'|'^'
+let custom_op = custom_op_char (custom_op_char | '>' | '!' )*
 let connecting_char = '\Pc'
 let combining_char = '\Mn' | '\Mc'
 let formatting_char = '\Cf' 
@@ -197,22 +186,25 @@ let tvar_char =
 let constructor = constructor_start_char ident_char*  
 let ident = ident_start_char ident_char*
 let tvar = '\'' (ident_start_char | constructor_start_char) tvar_char*
-let basekind = '*' | 'A' | 'E' | "Prop"
+let tvar_alt = constructor_start_char+
 
 rule token args = parse
  | ident 
-     { Lexhelp.kwd_or_id args (GetLexerRange lexbuf) (ulexeme lexbuf) }
+     { Lexhelp.kwd_or_id args (getLexerRange lexbuf) (ulexeme lexbuf) }
  | constructor
      { NAME(ulexeme lexbuf) }
  | tvar 
      { TVAR (ulexeme lexbuf) }
- | "#monadic"
-     { PRAGMAMONADIC }
- | "#dynamic"
-     { PRAGMADYNAMIC }
  | "#light"
      { PRAGMALIGHT }
- | "F#" | "C#"  { LANG(ulexeme lexbuf) }
+ | "#set-options"
+     { PRAGMA_SET_OPTIONS }
+ | "#reset-options"
+     { PRAGMA_RESET_OPTIONS }
+ | '#' ' ' (digit)*
+     { let n = Util.int_of_string (trim_left lexbuf 2) in
+	   mknewline (n - !lc) lexbuf; 
+       cpp_filename args lexbuf }
  | int8 
      { let n = trim_to_i32 lexbuf 1 in 
        if n > 0x80 || n < -0x80 then fail lexbuf "This number is outside the allowable range for 8-bit signed integers" (INT8(0y,false))
@@ -256,7 +248,7 @@ rule token args = parse
        let n =
            try int32 s with _ ->  fail lexbuf "This number is outside the allowable range for 32-bit signed integers" 0
        in 
-       INT32(n,false)
+       INT(n,false)
      } 
  | xint32 
  | int32 
@@ -382,10 +374,8 @@ rule token args = parse
  | "(|"             { LENS_PAREN_LEFT }
  | "|)"             { LENS_PAREN_RIGHT }
 
- | "(*)"            { LPAREN_STAR_RPAREN }
-
  | "(*"
-     { let m = GetLexerRange  lexbuf in 
+     { let m = getLexerRange  lexbuf in 
        comment(1,m,args) lexbuf }
 
  | '"' 
@@ -413,14 +403,16 @@ rule token args = parse
      { token args lexbuf  }
 
  | newline 
-     { newline lexbuf; 
+     { mknewline 1 lexbuf; 
        token args lexbuf }
 
  | '`' '`' ([^'`' '\n' '\r' '\t'] | '`' [^'`''\n' '\r' '\t']) + '`' '`' 
      { IDENT (trim_both lexbuf 2 2) }
 
+ | "=" { EQUALS }
  | '#' { HASH }
  | '&' { AMP }
+ | "!" { BANG }
  | "&&" { AMP_AMP }
  | "||" { BAR_BAR }
  | '\'' { QUOTE }
@@ -428,83 +420,47 @@ rule token args = parse
  | '(' { LPAREN }
  | ')' { RPAREN }
  | '*' { STAR }
- | "$*" 
-     { BASEKIND("*") }
- | "$A" 
- | "$Affine" 
-     { BASEKIND("A") }
- | "$E" 
- | "$Erasable" 
-     { BASEKIND("E") } 
- | "$P" 
- | "$Prop" 
-     { BASEKIND("P") }
  | ',' { COMMA }
  | "~>" { SQUIGGLY_RARROW }
  | "->" { RARROW }
- | "->>" { RARROW2 }
- | "=>" { RRARROW }
  | "<==>" { IFF }
  | "==>" { IMPLIES }
- | "?" { QMARK }
- | "??" { QMARK_QMARK }
  | ".." { DOT_DOT }
  | "." { DOT }
  | "{:pattern" { LBRACE_COLON_PATTERN }
  | ":" { COLON }
  | "::" { COLON_COLON }
- | "@" { ATSIGN }
- | "^" { HAT }
- | ":>" { COLON_GREATER }
- | ">." { GREATER_DOT }
- | ">|]" { GREATER_BAR_RBRACK }
- | ":?>" { COLON_QMARK_GREATER }
- | ":?" { COLON_QMARK }
  | ":=" { COLON_EQUALS }
  | ";;" { SEMICOLON_SEMICOLON }
  | ";" { SEMICOLON }
- | "<-" { LARROW }
- | "=!=" { EQUALS_BANG_EQUALS }
- | "==" { EQUALS_EQUALS }
- | "=" { EQUALS }
+ | "%[" { PERCENT_LBRACK }
  | "[" { LBRACK }
  | "[|" { LBRACK_BAR }
- | "<=" { LEQ }
- | ">=" { GEQ }
- | "<>" { LESSGREATER }
- | "<" {  if is_typ_app args lexbuf then TYP_APP_LESS else LESS  }
- | ">" { GREATER }
- | "|>" { PIPE_RIGHT }
- | "<|" { PIPE_LEFT }
- | "[<" { LBRACK_LESS }
- | "]" { RBRACK }
+ | "<" {  if is_typ_app args lexbuf then TYP_APP_LESS else CUSTOM_OP("<")  }
+ | ">" {  if is_typ_app_gt () then TYP_APP_GREATER else custom_op_parser args lexbuf }
+ | "]"  { RBRACK }
  | "|]" { BAR_RBRACK }
- | ">]" { GREATER_RBRACK }
  | "{" { LBRACE }
  | "|" { BAR }
  | "}" { RBRACE }
  | "$" { DOLLAR }
- | "%%" { PERCENT_OP("%%") }
- | "!" { BANG(ulexeme lexbuf) }
  | "~" { RESERVED }
  | "`" { RESERVED }
  | "\\" { BACKSLASH }
- | ('/' | '%')                                          { DIV_MOD_OP(ulexeme lexbuf) }
- | ('+'|'-')                                            { PLUS_MINUS_OP(ulexeme lexbuf) }
- | ignored_op_char* '*' '*'                    op_char* { CheckExprOp lexbuf; INFIX_STAR_STAR_OP(ulexeme lexbuf) }
- | ignored_op_char* ('=' | "!=" | '<' | '>' | '$')  op_char* { CheckExprOp lexbuf; INFIX_COMPARE_OP(ulexeme lexbuf) }
- | ignored_op_char* ('&')                      op_char* { CheckExprOp lexbuf; INFIX_AMP_OP(ulexeme lexbuf) }
- | ignored_op_char* '|'                        op_char* { CheckExprOp lexbuf; INFIX_BAR_OP(ulexeme lexbuf) }
- | ignored_op_char* ('?' | '~' )         op_char* { CheckExprOp lexbuf; PREFIX_OP(ulexeme lexbuf) }
- | ".[]"  | ".[]<-" | ".[,]<-" | ".[,,]<-" | ".[,,]" | ".[,]" | ".[..]" | ".[..,..]" 
- | ".()"  | ".()<-" | ".(,)<-" | ".(,,)<-" | ".(,,)" | ".(,)" | ".(..)" | ".(..,..)" { FUNKY_OPERATOR_NAME(ulexeme lexbuf) }
+ | ('/' | '%')                                               { DIV_MOD_OP(ulexeme lexbuf) }
+ | '+'                                                       { PLUS_OP }
+ | '-'                                                       { MINUS_OP }
+ | custom_op												 { CUSTOM_OP (ulexeme lexbuf) }
  | _ { unexpected_char lexbuf }     
- | eof { EOF }
+ | eof { lc := 1; EOF }
+
+and custom_op_parser args = parse
+ | custom_op_char * {CUSTOM_OP(">" ^  ulexeme lexbuf)}
 
 and string sargs = parse
  |  '\\' newline anywhite* 
     { let (buf,fin,m,args) = sargs in 
-      newline lexbuf; 
+      mknewline 1 lexbuf; 
       string sargs lexbuf }
 
  |  escape_char
@@ -540,17 +496,17 @@ and string sargs = parse
      
  |  '"' 
     { let (buf,fin,m,args) = sargs in 
-      let m2 = GetLexerRange lexbuf in 
+      let m2 = getLexerRange lexbuf in 
       Lexhelp.call_string_finish fin buf m2 false }
 
  |  '"''B' 
     { let (buf,fin,m,args) = sargs in 
-      let m2 = GetLexerRange lexbuf in 
+      let m2 = getLexerRange lexbuf in 
       Lexhelp.call_string_finish fin buf m2 true }
 
  | newline
     { let (buf,fin,m,args) = sargs in 
-      newline lexbuf; 
+      mknewline 1 lexbuf; 
       Lexhelp.add_string buf (ulexeme lexbuf); 
       string sargs lexbuf }
 
@@ -586,17 +542,17 @@ and vstring sargs = parse
 
  |  '"' 
     { let (buf,fin,m,args) = sargs in 
-      let m2 = GetLexerRange lexbuf in 
+      let m2 = getLexerRange lexbuf in 
       Lexhelp.call_string_finish fin buf m2 false }
 
  |  '"''B' 
     { let (buf,fin,m,args) = sargs in 
-      let m2 = GetLexerRange lexbuf in 
+      let m2 = getLexerRange lexbuf in 
       Lexhelp.call_string_finish fin buf m2 true }
 
  | newline 
     { let (buf,fin,m,args) = sargs in 
-      newline lexbuf; 
+      mknewline 1 lexbuf; 
       Lexhelp.add_string buf (ulexeme lexbuf); 
       vstring sargs lexbuf }
 
@@ -626,26 +582,19 @@ and vstring sargs = parse
 (* WARNING: taking sargs as a single parameter seems to make a difference as to whether *)
 (* OCaml takes tailcalls. *)
 and comment cargs = parse
- |  char
+ |  char | '"' | '@'
     { let n,m,args = cargs in 
       comment(n,m,args) lexbuf  } 
     
- | '"'   
-    { let n,m,args = cargs in 
-      comment_string n m args lexbuf }
-
- | '@' '"'
-    { let n,m,args = cargs in 
-      comment_vstring n m args lexbuf }
-
  | '(' '*'
     { let n,m,args = cargs in 
       comment (n+1,m,args) lexbuf }
      
  | newline
     { let n,m,args = cargs in 
-      newline lexbuf; 
+      mknewline 1 lexbuf; 
       comment cargs lexbuf }
+ 
  | "*)" 
     { 
       let n,m,args = cargs in 
@@ -664,50 +613,13 @@ and comment cargs = parse
  | _ { let n,m,args = cargs in 
        comment(n,m,args) lexbuf }
 
-and comment_string n m args = parse
- (* Follow string lexing, skipping tokens until it finishes *)
- |  '\\' newline anywhite* 
-     { newline lexbuf; 
-       comment_string n m args lexbuf }
+and cpp_filename args = parse
+ | ' ' '"' [^ '"']+ '"'
+     { let s = trim_both lexbuf 2 1 in
+	   let r = getLexerRange lexbuf in
+	   Range.set_file_of_range r s;
+	   ignore_endline args lexbuf }
 
- | escape_char
- | trigraph
- | hexgraph_short
- | unicodegraph_short
- | unicodegraph_long
- | ident  
- | xinteger
- | anywhite +  
-     { comment_string n m args lexbuf }
-
-
- | '"' 
-     { comment(n,m,args) lexbuf }
-     
- | newline 
-     { newline lexbuf;  
-       comment_string n m args lexbuf }
-     
- | eof 
-     { EOF }
-     
- | _  
-     { comment_string n m args lexbuf }
-
-and comment_vstring n m args = parse
- (* Follow vstring lexing, in short, skip double-quotes and other chars until we hit a single quote *)
- | '"' '"'
-     { comment_vstring n m args lexbuf }
-
- | '"' 
-     { comment(n,m,args) lexbuf }
-     
- | newline 
-     { newline lexbuf;
-       comment_vstring n m args lexbuf }
-     
- | eof 
-     { EOF }
-     
- | _  
-     { comment_vstring n m args lexbuf }
+and ignore_endline args = parse
+ | ' '* newline
+     { token args lexbuf }

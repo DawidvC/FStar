@@ -1,0 +1,9 @@
+.depend
+Microsoft_FStar_*
+FSharp_*
+System_*
+parse.*
+support.*
+fstarml*
+fstar/
+*.tar.gz

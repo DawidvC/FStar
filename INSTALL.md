@@ -1,13 +1,30 @@
-Prerequisites for building F* from sources (work in progress)
+### Binary releases ###
 
-At the moment:
+- https://github.com/FStarLang/FStar/releases
 
-- On Windows 8 with .NET framework 4.5 and F# v3.0 :
-  - Either using VisualStudio 2012, open FStar/VS/FStar.sln and build solution.
-  - or, with Cygwin's GNU make (4.0), run "make" from FStar/src
+### Building F* from sources ###
 
-- On Linux using Mono:
-  - Install mono and fsharp
+#### On Windows 7/8 using Visual Studio ####
+
+  - Prerequisite: .NET framework 4.5
+
+  - Prerequisite: [VisualStudio 2013 and Visual F# Tools (v3.0 or later)](http://fsharp.org/use/windows/)
+    - for instance install the **free**
+      [Visual Studio 2013 Community](https://www.visualstudio.com/en-us/products/visual-studio-community-vs.aspx)
+    - Install the Visual F# Tools from Microsoft
+      (by clicking the "Get Visual F# Tools for Visual Studio 2013"
+       link [here](https://msdn.microsoft.com/en-us/vstudio/hh388569.aspx))
+
+  - Using VisualStudio 2013, open `FStar/VS/FStar.sln` and build solution.
+
+  - Get a Z3 4.3.2 binary and add it to your PATH
+    - 64 bits: https://z3.codeplex.com/releases/view/135729
+    - 32 bits: https://z3.codeplex.com/releases/view/135728
+
+#### On Linux or Mac OS X using Mono ####
+
+  - Install mono 3.10.x or 3.12.x and fsharp 3.1.x
+  
     - On Debian/Ubuntu
 
             $ sudo apt-get install mono-complete fsharp
@@ -17,20 +34,30 @@ At the moment:
             $ pacman -S mono
             $ aura -A fsharp
 
-  - Import certificates
+    - For other Linux distributions check out these links:
+      - http://www.mono-project.com/download/#download-lin
+      - http://fsharp.org/use/linux/
+
+    - For Mac OS X install the MRE:
+      - http://www.mono-project.com/download/#download-mac
+
+  - Import certificates for Mono
 
           $ mozroots --import --sync
 
-  - Install Z3 4.3.1 from sources
+  - Get a Z3 4.3.2 binary and add it to your PATH
 
-          $ wget "https://download-codeplex.sec.s-msft.com/Download/SourceControlFileDownload.ashx?ProjectName=z3&changeSetId=89c1785b73225a1b363c0e485f854613121b70a7" -O z3-4.3.1-89c1785b-src.zip
-          $ unzip z3-4.3.1-89c1785b-src.zip -d z3-4.3.1-89c1785b-src
-          $ cd z3-4.3.1-89c1785b-src
-          $ autoconf
-          $ ./configure
-          $ python scripts/mk_make.py
-          $ cd build
-          $ make -j4
+    - On Linux (any distribution, not just Ubuntu) get binary from here:
+      - https://z3.codeplex.com/releases/view/101911
+
+      For instance, for a 64bit architecture you can do
+
+          $ wget "https://download-codeplex.sec.s-msft.com/Download/Release?ProjectName=z3&DownloadId=923684&FileTime=130586905368570000&Build=20959" -O z3-4.3.2.0713535fa6a3-x64-ubuntu-14.04.zip
+          $ unzip z3-4.3.2.0713535fa6a3-x64-ubuntu-14.04.zip
+          $ export PATH=z3-4.3.2.0713535fa6a3-x64-ubuntu-14.04/bin:$PATH
+
+    - On Mac OS X get binary from here:
+      - https://z3.codeplex.com/releases/view/101918
 
   - Compile F* from sources
 
@@ -41,5 +68,79 @@ At the moment:
   - Try out
 
           $ source setenv.sh
-          $ mono bin/fstar.exe --prims lib/prims.fst examples/unit-tests/utils.fst
-          $ mono bin/fstar.exe --prims lib/prims.fst examples/unit-tests/rec.fst
+          $ make test.net -C src
+
+  - If `make test.net` (`make boot` in fact) causes stack overflow try
+    issuing `ulimit -s unlimited` in the terminal beforehand.
+
+### Bootstrapping the compiler in OCaml ###
+
+#### Prerequisites on Windows ####
+
+0. Use Visual Studio for building `fstar.exe` as describes above
+   (note: running cygwin/wodi `make` in `src` will probably
+   just give you a broken binary).
+
+1. Use [Wodi] for installing OCaml (version 4.01.0 or newer)
+
+2. [Wodi] also installs it's own version of Cygwin. By installing Wodi
+   you get a special Cygwin terminal where you should run all the
+   commands below.
+
+   Note: If you want to also build F* binaries (instruction in the
+   next section), when Wodi asks which Cygwin packages you want add
+   `git` to the default list. If you forgot to do this, you can still
+   do that by downloading [Cygwin]'s `setup-x86.exe` and pointing it
+   at your Wodi install.
+
+3. Use the [Wodi] ocaml package manager to install `batteries`; you can
+   do this either from the visual package manager or by issuing the
+   command `godi_add godi-batteries` in Wodi's Cygwin terminal.
+
+[Wodi]: http://wodi.forge.ocamlcore.org/
+[Cygwin]: https://www.cygwin.com/
+
+#### Prerequisites on Linux and Mac OS X ####
+
+0. OCaml (version 4.01.0 or later)
+   - Can be installed using either your package manager or using OPAM
+     (see below).
+
+1. OPAM (version 1.2.x).
+   - Installation instructions available at various places
+     (e.g., https://github.com/realworldocaml/book/wiki/Installation-Instructions#getting-opam
+     or http://opam.ocaml.org/doc/Install.html).
+     You need to initialize it by running `opam init` and update the `PATH`
+     variable to the `ocamlfind` and the OCaml libraries. If you allow
+     `opam init` to edit your `~/.bashrc` or `~/.profile`, it is done
+     automatically; otherwise, use: `eval $(opam config env)`.
+
+2. Install OCaml Batteries using OPAM:
+
+        $ opam install batteries
+
+#### Bootstrapping the compiler in OCaml ####
+
+- Once you satisfy the prerequisites for your platform,
+  generate the OCaml backend by running the following commands in `src`:
+
+        $ make
+        $ make ocaml
+
+### Creating binary packages for your platform ###
+
+(no cross-platform compilation supported at the moment)
+
+0. Make sure you have the Z3 binary in your `<fstar-home>/bin` folder
+   (this prerequisite could go away at some point)
+
+1. Bootstrap the compiler in OCaml using the instructions above
+
+2. Run the following commands in `src/ocaml-output`:
+
+        $ make parser
+        $ make
+        $ make package
+
+3. Test that the binary is good by expanding the archive and running
+   `make` in the `examples` folder inside

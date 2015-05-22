@@ -1,6 +1,26 @@
 F*: An ML-like language with a type system for program verification
 ===================================================================
 
+### F\* website
+
+More information on F\* can be found at www.fstar-lang.org
+
+### Installation
+
+See [INSTALL.md]
+
+[INSTALL.md]: https://github.com/FStarLang/FStar/blob/master/INSTALL.md
+
+### Tutorial
+
+The [F\* tutorial] provides a first taste of verified programming in F*.
+
+[F\* tutorial]: https://www.fstar-lang.org/tutorial/
+
+### License
+
+This new variant of F* is released under the Apache 2.0 license;
+see LICENSE for more details.
 
 ### Version 1.0
 
@@ -9,14 +29,96 @@ hope will lead to a 1.0 release soon. This new variant is
 incompatible and quite different compared to the previously
 released 0.7 versions.
 
+### Contacting the F* team
 
-### License
+Please report bugs or ask questions using the GitHub issue tracker for
+the FStar project:
+https://github.com/FStarLang/FStar/issues
+Yes, we encourage asking questions on the issue tracker!
 
-This new variant of F* is released under the Apache 2.0 license;
-see LICENSE for more details.
+### Editing F* code
 
+#### Atom
 
-### Code structure
+[FStarIDE] is a recently started project aimed at devising an F* mode
+for the [Atom] editor.
+
+[Atom]: https://atom.io/
+[FStarIDE]: https://github.com/FStarLang/FStarIDE
+
+#### Vim
+
+[VimFStar] is a [Vim] plugin for F*.
+
+[Vim]: http://www.vim.org/
+[VimFStar]: https://github.com/FStarLang/VimFStar
+
+#### Emacs
+
+The [Tuareg Mode] for Objective Caml works quite well for F* too
+(although some people have reported crashes).
+Go for 2.0.9 (2015-03-25) or later to avoid some silly hangs that
+are already fixed.
+Tuareg is easiest to install using [MELPA].
+To use MELPA add this to your `.emacs` or `.emacs.d/init.el` file:
+```elisp
+(require 'package)
+(add-to-list 'package-archives
+             '("melpa" . "http://melpa.milkbox.net/packages/") t)
+```
+Now do `M-x package-install` and install `tuareg`.
+
+Then add the rest of the configuration to `.emacs` or `.emacs.d/init.el`:
+```elisp
+(add-hook 'tuareg-mode-hook 'tuareg-imenu-set-imenu)
+(setq auto-mode-alist
+      (append '(("\\.ml[ily]?$" . tuareg-mode)
+                ("\\.topml$" . tuareg-mode))
+              auto-mode-alist))
+(setq auto-mode-alist 
+      (append '(("\\.fs[tiy]?$" . tuareg-mode))
+          auto-mode-alist))
+```
+Finally, if you want easy navigation through F* error messages also
+add this to your `.emacs` or `.emacs.d/init.el`:
+```elisp
+(add-to-list 'compilation-error-regexp-alist
+ '("\\([0-9a-zA-Z._/-]*.fst\\)(\\([0-9]+\\)\\,\\([0-9]+\\)-[0-9]+\\,[0-9]+)" 1 2 3))
+(add-to-list 'compilation-error-regexp-alist
+ '("^ERROR: Syntax error near line \\([0-9]+\\), character \\([0-9]+\\) in file \\(.*\\)$" 3 1 2))
+```
+
+[Tuareg Mode]: https://github.com/ocaml/tuareg
+[MELPA]: http://melpa.org
+
+### Executing F* code
+
+By default F* only verifies the input code, it does not execute it.
+To execute F* code one needs to translate it to OCaml
+using the OCaml backend (the `--codegen OCaml` command-line argument to F*).
+The generated executable OCaml code most often depends on a support library;
+obtaining this support library requires
+[bootstrapping in OCaml](https://github.com/FStarLang/FStar/blob/master/INSTALL.md#bootstrapping-the-compiler-in-ocaml)
+(once all prerequisites are satisfied running `make ocaml` in the
+`src` directory)
+and afterwards running `make parser` in the `src/ocaml-output` directory
+(see [more instructions here]).
+
+[more instructions here]: https://github.com/FStarLang/FStar/blob/master/INSTALL.md\#creating-binary-packages-for-your-platform
+
+The OCaml backend will produce `<ModuleName>.ml` files for each F*
+module in the code.
+Those `.ml` files can then be compiled into executable code using the
+following command in the directory containing the ocaml files:
+
+```
+ocamlfind ocamlopt -o program -package batteries -linkpkg -thread -I $FSTAR_HOME/src/ocaml-output/ $FSTAR_HOME/src/ocaml-output/support.ml <OCamlFiles>.ml
+```
+where `program` is the desired name of the produced executable.
+Linking the `ocaml-output` directory and `support.ml` is required if
+the F* code used any built-in functions.
+
+### Code structure (partially outdated)
 
 This section describes the general structure of the F* verifier.
 
@@ -49,9 +151,14 @@ This section describes the general structure of the F* verifier.
 
      All these binaries are available separately. 
 
-     In order to use F*, you will need to separately download Z3 4.3.1
+     In order to use F*, you will need to download Z3 4.3.1 or 4.3.2
      binaries and place them in this directory (or somewhere in your
      path). You can fetch these binaries from z3.codeplex.com.
+
+     F* should also be compatible with any theorem prover that implements
+     the SMT2 standard (we use no Z3-specific features). So, you 
+     should be able to use another solver by passing the 
+     "--smt <path to solver exe>" option to F*.
      
      
   examples/
@@ -74,7 +181,7 @@ This section describes the general structure of the F* verifier.
                using the command line.
      
      VS/FStar.sln:
-        A Visual Studio (2012) solution file for all the F* sources.
+        A Visual Studio (2013) solution file for all the F* sources.
 
      fstar.fs: The top-level file in the source tree that launches the
                verification tool.

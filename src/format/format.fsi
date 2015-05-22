@@ -27,12 +27,12 @@ val combine : doc -> list<doc> -> doc
 val groups  : list<doc> -> doc
 val align   : list<doc> -> doc
 val hbox    : doc -> doc
-val parse   : string -> doc
 
 (* -------------------------------------------------------------------- *)
 val enclose  : doc -> doc -> doc -> doc
 val parens   : doc -> doc
 val brackets : doc -> doc
+val cbrackets : doc -> doc
 
 (* -------------------------------------------------------------------- *)
 val pretty : int -> doc -> string

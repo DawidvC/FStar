@@ -21,30 +21,43 @@ open Microsoft.FStar.Parser
 open Microsoft.FStar.Parser.AST
 open Microsoft.FStar.Parser.Parse
 open Microsoft.FStar.Util
+
+open Microsoft.FStar.Absyn
 open Microsoft.FStar.Absyn.Syntax
 
 let print_error msg r = 
   Util.print_string (Util.format2 "ERROR %s: %s\n" (Range.string_of_range r) msg)
 
-let parse env fn =
-  match ParseIt.parse_file fn with 
-    | Inl ast ->
+let is_cache_file (fn: string) = Util.get_file_extension fn = ".cache"
+
+let parse_fragment curmod env frag =
+    match ParseIt.parse (Inr frag) with
+    | Inl (Inl [modul]) -> //interactive mode: module
+      let env, modul = Desugar.desugar_partial_modul curmod env modul in
+      Inl (env, modul)
+  
+    | Inl (Inr decls) -> //interactive mode: more decls
+      Inr <| Desugar.desugar_decls env decls
+  
+    | Inl (Inl _) -> 
+      raise (Absyn.Syntax.Err("Refusing to check more than one module at a time incrementally"))
+
+    | Inr (msg,r) -> 
+      raise (Absyn.Syntax.Error(msg, r))
+
+let parse_file env fn =
+  if is_cache_file fn then
+    let full_name = Options.get_fstar_home () ^ "/" ^ Options.cache_dir ^ "/" ^ fn in
+    let m = SSyntax.deserialize_modul (get_oreader full_name) in
+    Desugar.add_modul_to_env m env, [m]
+  else
+    match ParseIt.parse (Inl fn) with
+    | Inl (Inl ast) ->
       Desugar.desugar_file env ast
-    | Inr msg -> 
-      Util.print_string msg;
-      exit 0
+  
+    | Inr (msg, r) -> 
+      Util.print_string <| Print.format_error r msg;
+      exit 1
 
-let parse_files files = 
-  let _, mods = List.fold_left (fun (env,mods) fn -> 
-    let env, m = parse env (Inl fn) in
-    let _ = match !Options.dump_module with 
-      | Some n -> 
-        m |> List.iter (fun (m:Absyn.Syntax.modul) -> if n=m.name.str then (Util.format1 "%s\n" <| Absyn.Print.modul_to_string m) |> Util.print_string)
-      | _ -> () in
-    (env, m::mods)) (DesugarEnv.empty_env(), []) files in 
-  List.rev mods |> List.flatten
-
-(* ;;  *)
-
-(* parse_files ["prims.fst"] *)
+let read_build_config file = ParseIt.read_build_config file
   

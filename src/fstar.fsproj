@@ -25,8 +25,8 @@
     </DocumentationFile>
     <Prefer32Bit>false</Prefer32Bit>
     <OtherFlags>--mlcompatibility</OtherFlags>
-    <StartWorkingDirectory>C:\Users\nswamy\workspace\new\FStar\src</StartWorkingDirectory>
-    <StartArguments>--fstar_home ..  --debug low --admit_fsi Microsoft.FStar.Util ../lib/system.fst ../lib/st.fst ../lib/list.fst ../lib/option.fst ../lib/string.fst basic/bytes.fst basic/util.fsi basic/getoptsimple.fst basic/options.fs basic/range.fst basic/unionfind.fst basic/lazyset.fsi basic/lazyset.fs absyn/syntax.fsi absyn/syntax.fs absyn/const.fs absyn/visit.fs absyn/util.fs absyn/print.fs tc/errors.fs tc/tcenv.fsi tc/tcenv.fs tc/normalize.fsi tc/normalize.fs tc/rel-test.fs</StartArguments>
+    <StartWorkingDirectory>C:\Users\nswamy\workspace\FStar\examples\bug-reports</StartWorkingDirectory>
+    <StartArguments>--fstar_home ../.. --debug Bug170 --debug_level Extreme --prn bug170.fst</StartArguments>
     <StartAction>Project</StartAction>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -62,6 +62,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="fstar.fs" />
+    <Compile Include="main.fs" />
     <None Include="app.config" />
   </ItemGroup>
   <ItemGroup>
@@ -70,9 +71,6 @@
       <Project>{670da3f6-7e41-4c1d-ab17-1f59e0317f52}</Project>
       <Private>True</Private>
     </ProjectReference>
-    <Reference Include="FSharp.Core">
-      <HintPath>..\bin\FSharp.Core.dll</HintPath>
-    </Reference>
     <Reference Include="FSharp.PowerPack">
       <HintPath>..\bin\FSharp.PowerPack.dll</HintPath>
     </Reference>

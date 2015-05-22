@@ -22,7 +22,6 @@ open Microsoft.FStar
 open Microsoft.FStar.Absyn.Syntax
 open Microsoft.FStar.Absyn
 open Microsoft.FStar.Util
-open Microsoft.FStar.LazySet
 
 type sort =
   | Bool_sort 
@@ -32,76 +31,79 @@ type sort =
   | Term_sort 
   | String_sort
   | Ref_sort
+  | Fuel_sort
   | Array of sort * sort
   | Arrow of sort * sort
   | Sort of string
 
-type term' =
+type op = 
   | True
   | False
-  | Integer    of int
-  | BoundV     of string * sort 
-  | FreeV      of string * sort
-  | PP         of term * term
-  | App        of string * list<term>
-  | Not        of term
-  | And        of term * term
-  | Or         of term * term
-  | Imp        of term * term
-  | Iff        of term * term
-  | Eq         of term * term
-  | LT         of term * term
-  | LTE        of term * term
-  | GT         of term * term
-  | GTE        of term * term
-  | Add        of term * term
-  | Sub        of term * term
-  | Div        of term * term
-  | Mul        of term * term
-  | Minus      of term
-  | Mod        of term * term
-  | ITE        of term * term * term 
-  | Forall     of list<pat> * list<(string * sort)> * term 
-  | Exists     of list<pat> * list<(string * sort)> * term 
-  | Select     of term * term 
-  | Update     of term * term * term
-  | ConstArray of string * sort * term 
-  | Cases      of list<term>
-and pat = term
-and term = {tm:term'; freevars:set<var>}
-and var = (string * sort)
+  | Not
+  | And
+  | Or 
+  | Imp
+  | Iff
+  | Eq 
+  | LT 
+  | LTE
+  | GT 
+  | GTE
+  | Add
+  | Sub
+  | Div
+  | Mul
+  | Minus
+  | Mod 
+  | ITE
+  | Var of string
 
+type qop = 
+  | Forall
+  | Exists
+
+type term' =
+  | Integer    of int
+  | BoundV     of int
+  | FreeV      of fv
+  | App        of op  * list<term>
+  | Quant      of qop * list<list<pat>> * option<int> * list<sort> * term 
+and pat  = term
+and term = {tm:term'; hash:string; freevars:Syntax.memo<fvs>}
+and fv = string * sort
+and fvs = list<fv>
+
+val fv_eq : fv -> fv -> bool
+val fv_of_term : term -> fv
+val free_variables: term -> fvs
 val mkTrue : term
 val mkFalse : term
 val mkInteger : int -> term
-val mkBoundV : (string * sort) -> term
+val mkBoundV : int -> term
 val mkFreeV  : (string * sort) -> term
-val mkPP   : (term * term) -> term
+val mkApp' : (op * list<term>) -> term
 val mkApp  : (string * list<term>) -> term
 val mkNot  : term -> term
-val mkAnd  : (term * term) -> term
-val mkOr  : (term * term) -> term
-val mkImp : (term * term) -> term
-val mkIff : (term * term) -> term
-val mkEq : (term * term) -> term
-val mkLT : (term * term) -> term
-val mkLTE : (term * term) -> term
-val mkGT: (term * term) -> term
-val mkGTE: (term * term) -> term
-val mkAdd: (term * term) -> term
-val mkSub: (term * term) -> term
-val mkDiv: (term * term) -> term
-val mkMul: (term * term) -> term
 val mkMinus: term -> term
-val mkMod: (term * term) -> term
+val mkAnd  : ((term * term) -> term)
+val mkOr  :  ((term * term) -> term)
+val mkImp :  ((term * term) -> term)
+val mkIff :  ((term * term) -> term)
+val mkEq :   ((term * term) -> term)
+val mkLT :   ((term * term) -> term)
+val mkLTE :  ((term * term) -> term)
+val mkGT:    ((term * term) -> term)
+val mkGTE:   ((term * term) -> term)
+val mkAdd:   ((term * term) -> term)
+val mkSub:   ((term * term) -> term)
+val mkDiv:   ((term * term) -> term)
+val mkMul:   ((term * term) -> term)
+val mkMod:   ((term * term) -> term)
 val mkITE: (term * term * term) -> term 
-val mkSelect: (term * term) -> term
-val mkUpdate: (term * term * term) -> term 
 val mkCases : list<term> -> term
-val mkConstArr: (string * sort * term) -> term
-val mkForall: (list<pat> * list<(string * sort)> * term) -> term
-val collapseForall: (list<pat> * list<(string * sort)> * term) -> term
-val mkExists: (list<pat> * list<(string * sort)> * term) -> term
+val mkForall: (list<pat> * fvs * term) -> term
+val mkForall': (list<list<pat>> * option<int> * fvs * term) -> term
+val mkExists: (list<pat> * fvs * term) -> term
 
 type caption = option<string>
 type binders = list<(string * sort)>
@@ -111,7 +113,7 @@ type constructors  = list<constructor_t>
 type decl =
   | DefPrelude
   | DeclFun    of string * list<sort> * sort * caption
-  | DefineFun  of string * list<(string * sort)> * sort * term * caption
+  | DefineFun  of string * list<sort> * sort * term * caption
   | Assume     of term   * caption
   | Caption    of string
   | Eval       of term
@@ -119,18 +121,21 @@ type decl =
   | Push
   | Pop
   | CheckSat
-type decls = list<decl>
+type decls_t = list<decl>
 
-val freevars: term -> list<(string * sort)>
-val fv_minus: term -> list<(string * sort)> -> list<(string * sort)>
-val constructor_to_decl: constructor_t -> decls
-val termToSmt: binders -> term -> string
+val fresh_token: (string * sort) -> int -> decl
+//val constructor_to_decl_aux: bool -> constructor_t -> decls_t
+val constructor_to_decl: constructor_t -> decls_t
+val termToSmt: term -> string
 val declToSmt: string -> decl -> string
 
 val mk_Kind_type : term
 val mk_Typ_app : term -> term -> term
 val mk_Typ_dep : term -> term -> term
+val mk_Typ_uvar: int -> term
+val mk_Exp_uvar: int -> term
 val mk_and_l: list<term> -> term
+val mk_or_l: list<term> -> term
 
 val boxInt: term -> term
 val unboxInt: term -> term
@@ -146,13 +151,23 @@ val mk_PreKind: term -> term
 val mk_PreType: term -> term
 val mk_Valid: term -> term
 val mk_HasType: term -> term -> term
+val mk_IsTyped : term -> term
+val mk_HasTypeFuel: term -> term -> term -> term
+val mk_HasTypeWithFuel: option<term> -> term -> term -> term 
 val mk_HasKind: term -> term -> term
 val mk_tester: string -> term -> term
 val mk_ApplyTE: term -> term -> term
 val mk_ApplyTT: term -> term -> term
 val mk_ApplyET: term -> term -> term
 val mk_ApplyEE: term -> term -> term
+val mk_ApplyEF: term -> term -> term
 val mk_String_const: int -> term
+val mk_Precedes: term -> term -> term
+val mk_LexCons: term -> term -> term
+val fuel_2: term
+val fuel_100:term
+val n_fuel: int -> term
 
-val freeV_sym: term -> string
-val boundV_sym:term -> string
+val push: unit -> unit
+val pop: unit -> unit
+val commit_mark: unit -> unit

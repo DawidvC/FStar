@@ -15,14 +15,22 @@
 *)
 
 module Patterns
-  
-let test (a,b)  = 
+
+type t =
+  | A : int -> t
+  | B : int -> t
+
+let test_disj t = match t with
+  | A i
+  | B i -> i
+
+let test (a,b)  =
   let _ = true, b in
   Cons 0 a
 
 let rec f x = f x + 1
 
-type T = 
+type T =
   | MkT of int * int
 let test_impure x = MkT (f x, 0)
 
@@ -30,9 +38,9 @@ let test_impure x = MkT (f x, 0)
 assume val fold_left: ('a -> 'b -> 'a) -> 'a -> list 'b -> 'a
 let test2 env el =
   fold_left (fun (out, env) wopt ->
-    let w, env = None, env in
-    (Cons w out), env) ([], env) el
-
+             let w, env = None, env in
+             (Cons w out), env) ([], env) el
+            
 
 let test3 map_exp env el =
   fold_left (fun (out, env) (b,wopt,e) ->

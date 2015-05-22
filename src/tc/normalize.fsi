@@ -20,16 +20,18 @@ module Microsoft.FStar.Tc.Normalize
 
 open Microsoft.FStar.Tc
 open Microsoft.FStar.Absyn.Syntax
- 
-type step = 
-  | WHNF
-  | Eta
-  | Delta        (* don't expand abbreviations if they aren't blocking reduction *)
-  | DeltaHard    (* expand all abbreviations *)
-  | Beta
+
+type step =
+  | WHNF         (* reduce to weak head normal form only -- CH: adding this removes behaviors, quite unintuitive; NS: Not sure what this comment means. *)
+                 (* without WHNF, all the strategies reduce under lambdas *)
+  | Eta          (* eta expansion (of type functions) *)
+  | Delta        (* expand type abbreviations only if reduction is blocked *)
+  | DeltaHard    (* expand all type abbreviations *)
+  | Beta         (* beta reduction -- CH: currently adding this changes nothing, seems that Beta always performed *)
   | DeltaComp    (* expand computation-type abbreviations *)
-  | Simplify     (* simplify formulas while reducing -- experimental *)
+  | Simplify     (* simplify formulas while reducing -- experimental -- CH: actually unused *)
   | SNComp       (* normalize computation types also *)
+  | Unmeta       (* remove Metas other than Meta_named -- CH: at the moment Meta_named causes failwith; why? *)
 and steps = list<step>
 
 val eta_expand: Env.env -> typ -> typ
@@ -41,4 +43,12 @@ val norm_comp: steps -> Env.env -> comp -> comp
 val weak_norm_comp: Env.env -> comp -> comp_typ
 val norm_kind: steps -> Env.env -> knd -> knd
 val norm_typ:  steps -> Env.env -> typ -> typ
+val norm_exp:  steps -> Env.env -> exp -> exp
+val norm_sigelt: Env.env -> sigelt -> sigelt
+val normalize_refinement: Env.env -> typ -> typ
 val whnf: Env.env -> typ -> typ
+val exp_norm_to_string: Env.env -> exp -> string
+val typ_norm_to_string : Env.env -> typ -> string
+val kind_norm_to_string : Env.env -> knd -> string
+val formula_norm_to_string : Env.env -> typ -> string
+val comp_typ_norm_to_string : Env.env -> comp -> string
